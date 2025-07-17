@@ -3,6 +3,7 @@ from Crypto.Random import get_random_bytes
 from src.vault import Vault
 from src.exceptions import InvalidPasswordError
 import json
+from src.decoy_templates import get_random_template
 
 class VaultManager:
     def __init__(self, vault_path):
@@ -21,7 +22,11 @@ class VaultManager:
         salt = get_random_bytes(16)
         vault = Vault.create(password, salt)
         if is_decoy:
-            vault.add_note("decoy_note", "This is a decoy note.")
+            template = get_random_template()
+            for note_name, content in template['notes']:
+                vault.add_note(note_name, content)
+            # We are not using tags yet, but we can store them for later
+            vault.add_note("tags", ", ".join(template['tags']))
         else:
             vault.add_note("welcome_note", "Welcome to your new BlackInk vault.")
 
@@ -38,12 +43,14 @@ class VaultManager:
     def load_vault(self, password):
         # Try to load the main vault
         try:
-            return self._load_vault_file(self.vault_path, password)
+            vault = self._load_vault_file(self.vault_path, password)
+            return vault, False
         except InvalidPasswordError:
             # If the main vault fails, try the decoy vault
             try:
                 decoy_vault_path = self.vault_path + ".decoy"
-                return self._load_vault_file(decoy_vault_path, password)
+                vault = self._load_vault_file(decoy_vault_path, password)
+                return vault, True
             except (InvalidPasswordError, FileNotFoundError):
                 raise InvalidPasswordError("Incorrect password or corrupted vault.")
 

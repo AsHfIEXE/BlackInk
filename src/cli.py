@@ -2,8 +2,10 @@ import argparse
 from src.vault_manager import VaultManager
 from src.exceptions import InvalidPasswordError
 import os
+import logging
 
 def main():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     parser = argparse.ArgumentParser(description="BlackInk - A secure writing tool.")
     parser.add_argument("vault_path", help="Path to the vault file.")
     parser.add_argument("--create", action="store_true", help="Create a new vault.")
@@ -25,13 +27,21 @@ def main():
             print("Vault created.")
         return
 
-    password = input("Enter password: ")
+    password = input("Enter passphrase: ")
     try:
-        vault = manager.load_vault(password)
+        vault, is_decoy = manager.load_vault(password)
+        if is_decoy:
+            logging.info("Decoy vault loaded.")
+            print("➤ Vault loaded: Decoy Mode")
+        else:
+            logging.info("Main vault loaded.")
+            print("➤ Vault loaded: Specter")
     except InvalidPasswordError as e:
-        print(e)
+        logging.error(f"Failed to load vault: {e}")
+        print("Incorrect passphrase.")
         return
     except FileNotFoundError:
+        logging.error("Vault not found.")
         print("Vault not found. Use --create to create a new vault.")
         return
 
