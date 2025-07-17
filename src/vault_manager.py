@@ -6,8 +6,9 @@ import json
 from src.decoy_templates import get_random_template
 
 class VaultManager:
-    def __init__(self, vault_path):
+    def __init__(self, vault_path, log_attempts=False):
         self.vault_path = vault_path
+        self.log_attempts = log_attempts
 
     def create_vault(self, password, decoy_password=None):
         # Create the main vault
@@ -41,18 +42,32 @@ class VaultManager:
             json.dump(vault_content, f)
 
     def load_vault(self, password):
-        # Try to load the main vault
         try:
             vault = self._load_vault_file(self.vault_path, password)
             return vault, False
         except InvalidPasswordError:
-            # If the main vault fails, try the decoy vault
-            try:
-                decoy_vault_path = self.vault_path + ".decoy"
-                vault = self._load_vault_file(decoy_vault_path, password)
-                return vault, True
-            except (InvalidPasswordError, FileNotFoundError):
+            if self.log_attempts:
+                logging.warning("Incorrect password attempt on main vault.")
+
+            decoy_vault_path = self.vault_path + ".decoy"
+            if os.path.exists(decoy_vault_path):
+                try:
+                    vault = self._load_vault_file(decoy_vault_path, password)
+                    return vault, True
+                except InvalidPasswordError:
+                    # If the decoy vault also fails, load a dummy decoy vault
+                    return self._load_dummy_decoy_vault(password)
+            else:
                 raise InvalidPasswordError("Incorrect password or corrupted vault.")
+
+    def _load_dummy_decoy_vault(self, password):
+        salt = get_random_bytes(16)
+        vault = Vault.create(password, salt)
+        template = get_random_template()
+        for note_name, content in template['notes']:
+            vault.add_note(note_name, content)
+        vault.add_note("tags", ", ".join(template['tags']))
+        return vault, True
 
     def _load_vault_file(self, path, password):
         with open(path, 'r') as f:

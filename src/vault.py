@@ -74,6 +74,22 @@ class Vault:
 
         return note['content']
 
+    def list_notes(self):
+        return self.notes.keys()
+
+    def search_notes(self, query):
+        results = []
+        for note_name, note_data in self.notes.items():
+            if query in note_data['content']:
+                results.append(note_name)
+        return results
+
+    def purge_note(self, note_name):
+        if note_name in self.notes:
+            # Overwrite with random data
+            self.notes[note_name]['content'] = os.urandom(len(self.notes[note_name]['content'])).hex()
+            del self.notes[note_name]
+
     def to_json(self):
         return json.dumps(self.notes).encode('utf-8')
 
