@@ -2,88 +2,83 @@ import os
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Random import get_random_bytes
+from Crypto.Hash import HMAC, SHA256
 import json
+import time
+from src.exceptions import InvalidPasswordError
 
 class Vault:
-    def __init__(self, vault_path, password):
-        self.vault_path = vault_path
-        self.password = password
-        self.key = None
-        self.salt = None
+    def __init__(self, key):
+        self.key = key
+        self.notes = {}
 
-        if not os.path.exists(self.vault_path):
-            self._create_vault()
-        else:
-            self._load_vault()
+    @staticmethod
+    def create(password, salt):
+        key = PBKDF2(password, salt, dkLen=32, count=1000000)
+        return Vault(key)
 
-    def _create_vault(self):
-        self.salt = get_random_bytes(16)
-        self.key = self._derive_key(self.password, self.salt)
-        with open(self.vault_path, 'wb') as f:
-            f.write(self.salt)
-
-    def _load_vault(self):
-        with open(self.vault_path, 'rb') as f:
-            self.salt = f.read(16)
-        self.key = self._derive_key(self.password, self.salt)
-
-    def _derive_key(self, password, salt):
-        return PBKDF2(password, salt, dkLen=32, count=1000000)
-
-    def encrypt_note(self, note_name, content):
+    def encrypt(self, data):
+        # Use a new nonce for each encryption
         cipher = AES.new(self.key, AES.MODE_GCM)
-        ciphertext, tag = cipher.encrypt_and_digest(content.encode('utf-8'))
+        ciphertext, tag = cipher.encrypt_and_digest(data)
 
-        vault_data = self._read_vault_data()
-        vault_data[note_name] = {
+        # Create an HMAC of the ciphertext
+        hmac = HMAC.new(self.key, digestmod=SHA256)
+        hmac.update(ciphertext)
+
+        return {
             'nonce': cipher.nonce.hex(),
             'tag': tag.hex(),
-            'ciphertext': ciphertext.hex()
+            'ciphertext': ciphertext.hex(),
+            'hmac': hmac.hexdigest()
         }
-        self._write_vault_data(vault_data)
 
-    def decrypt_note(self, note_name):
-        vault_data = self._read_vault_data()
-        note_data = vault_data.get(note_name)
-        if not note_data:
-            return "Decryption failed. Incorrect password or corrupted data."
+    def decrypt(self, encrypted_data):
+        nonce = bytes.fromhex(encrypted_data['nonce'])
+        tag = bytes.fromhex(encrypted_data['tag'])
+        ciphertext = bytes.fromhex(encrypted_data['ciphertext'])
+        hmac = encrypted_data['hmac']
 
-        nonce = bytes.fromhex(note_data['nonce'])
-        tag = bytes.fromhex(note_data['tag'])
-        ciphertext = bytes.fromhex(note_data['ciphertext'])
+        # Verify the HMAC
+        h = HMAC.new(self.key, digestmod=SHA256)
+        h.update(ciphertext)
+        try:
+            h.hexverify(hmac)
+        except ValueError:
+            raise InvalidPasswordError("HMAC verification failed. The data may have been tampered with.")
 
         cipher = AES.new(self.key, AES.MODE_GCM, nonce=nonce)
         try:
-            decrypted_content = cipher.decrypt_and_verify(ciphertext, tag)
-            return decrypted_content.decode('utf-8')
+            return cipher.decrypt_and_verify(ciphertext, tag)
         except (ValueError, KeyError):
-            return "Decryption failed. Incorrect password or corrupted data."
+            raise InvalidPasswordError("Decryption failed. Incorrect password or corrupted data.")
 
-    def _read_vault_data(self):
-        with open(self.vault_path, 'rb') as f:
-            f.seek(16)  # Skip the salt
-            nonce = f.read(16)
-            tag = f.read(16)
-            ciphertext = f.read()
+    def add_note(self, note_name, content, fade_time=None):
+        delete_at = None
+        if fade_time:
+            delete_at = time.time() + fade_time
 
-        if not ciphertext:
-            return {}
+        self.notes[note_name] = {
+            'content': content,
+            'delete_at': delete_at
+        }
 
-        cipher = AES.new(self.key, AES.MODE_GCM, nonce=nonce)
-        try:
-            decrypted_data = cipher.decrypt_and_verify(ciphertext, tag)
-            return json.loads(decrypted_data.decode('utf-8'))
-        except (ValueError, KeyError, json.JSONDecodeError):
-            # If the vault is empty or corrupted, return an empty dict
-            return {}
+    def get_note(self, note_name):
+        note = self.notes.get(note_name)
+        if not note:
+            return None
 
-    def _write_vault_data(self, data):
-        json_data = json.dumps(data).encode('utf-8')
-        cipher = AES.new(self.key, AES.MODE_GCM)
-        ciphertext, tag = cipher.encrypt_and_digest(json_data)
+        if note.get('delete_at') and time.time() > note.get('delete_at'):
+            del self.notes[note_name]
+            return "This note has faded."
 
-        with open(self.vault_path, 'wb') as f:
-            f.write(self.salt)
-            f.write(cipher.nonce)
-            f.write(tag)
-            f.write(ciphertext)
+        return note['content']
+
+    def to_json(self):
+        return json.dumps(self.notes).encode('utf-8')
+
+    @classmethod
+    def from_json(cls, key, json_data):
+        vault = cls(key)
+        vault.notes = json.loads(json_data)
+        return vault
