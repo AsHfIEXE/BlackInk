@@ -5,26 +5,79 @@ import time
 from src.vault_manager import VaultManager
 from src.exceptions import InvalidPasswordError
 from src.entry_templates import TEMPLATES
+from src.sync_manager import SyncManager
+from src.ai_manager import AIManager
+from src.themes import THEMES
+import json
+
+def get_style():
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+        return THEMES.get(config.get('theme', 'default'), THEMES['default'])
+    except (FileNotFoundError, json.JSONDecodeError):
+        return THEMES['default']
+
+def get_message(message_type, default_message):
+    try:
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+        return config.get('messages', {}).get(message_type, default_message)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default_message
 
 def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    style = questionary.Style([
-        ('question', 'fg:#673ab7 bold'),
-        ('pointer', 'fg:#cc5454 bold'),
-        ('highlighted', 'fg:#cc5454 bold'),
-        ('selected', 'fg:#cc5454'),
-        ('separator', 'fg:#cc5454'),
-        ('instruction', 'fg:#cc5454'),
-        ('text', 'fg:#ffffff'),
-        ('answer', 'fg:#f44336 bold'),
-    ])
+    style = get_style()
 
     command = questionary.select(
         "What would you like to do?",
-        choices=["create-vault", "unlock-vault", "reflect"],
+        choices=["create-vault", "unlock-vault", "reflect", "sync", "set-theme", "set-message", "link-entries"],
         style=style
     ).ask()
+
+    if command == "set-theme":
+        theme_name = questionary.select(
+            "Choose a theme:",
+            choices=list(THEMES.keys()),
+            style=style
+        ).ask()
+        with open('config.json', 'w') as f:
+            json.dump({'theme': theme_name}, f)
+        print(f"Theme set to {theme_name}.")
+        return
+
+    if command == "set-message":
+        message_type = questionary.select(
+            "Which message would you like to set?",
+            choices=["create-vault", "unlock-vault", "reflect"],
+            style=style
+        ).ask()
+        message = questionary.text("Enter your custom message:", style=style).ask()
+
+        try:
+            with open('config.json', 'r') as f:
+                config = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            config = {}
+
+        if 'messages' not in config:
+            config['messages'] = {}
+        config['messages'][message_type] = message
+
+        with open('config.json', 'w') as f:
+            json.dump(config, f)
+        print("Message set.")
+        return
+
+    if command == "link-entries":
+        note1 = questionary.text("Enter the first note to link:", style=style).ask()
+        note2 = questionary.text("Enter the second note to link:", style=style).ask()
+        vault.link_notes(note1, note2)
+        manager.save_vault(vault, password)
+        print("Notes linked.")
+        return
 
     if command == "create-vault":
         vault_path = questionary.text("Vault name:", style=style).ask()
@@ -35,10 +88,10 @@ def main():
 
         if decoy_password:
             manager.create_vault(primary_password, decoy_password)
-            print("Your thoughts are safe here. Vault with decoy initialized and encrypted.")
+            print(get_message("create-vault", "Your thoughts are safe here. Vault with decoy initialized and encrypted."))
         else:
             manager.create_vault(primary_password)
-            print("Your thoughts are safe here. Vault initialized and encrypted.")
+            print(get_message("create-vault", "Your thoughts are safe here. Vault initialized and encrypted."))
         return
 
     if command == "reflect":
@@ -50,19 +103,60 @@ def main():
             print("Could not unlock vault.")
             return
 
+        assist = questionary.confirm("Use AI assistance?", style=style).ask()
+        if assist:
+            ai_manager = AIManager()
+
         print("How did today feel?")
         q1 = questionary.text("", style=style).ask()
+        if assist:
+            q1 += ai_manager.get_assistance(q1)
+            print(f"💡 {q1}")
+
         print("What drained you? What sparked you?")
         q2 = questionary.text("", style=style).ask()
+        if assist:
+            q2 += ai_manager.get_assistance(q2)
+            print(f"💡 {q2}")
+
         print("What did you avoid saying?")
         q3 = questionary.text("", style=style).ask()
+        if assist:
+            q3 += ai_manager.get_assistance(q3)
+            print(f"💡 {q3}")
 
         entry = f"How did today feel?\n{q1}\n\nWhat drained you? What sparked you?\n{q2}\n\nWhat did you avoid saying?\n{q3}"
 
         note_name = f"reflection_{time.strftime('%Y-%m-%d')}"
         vault.add_note(note_name, entry)
         manager.save_vault(vault, password)
-        print("Your reflection has been saved securely. No one else sees this.")
+        print(get_message("reflect", "Your reflection has been saved securely. No one else sees this."))
+        return
+
+    if command == "sync":
+        vault_path = questionary.text("Vault name:", style=style).ask()
+        sync_manager = SyncManager(vault_path)
+
+        action = questionary.select(
+            "What would you like to do?",
+            choices=["set-remote", "sync", "decrypt"],
+            style=style
+        ).ask()
+
+        if action == "set-remote":
+            remote_url = questionary.text("Enter remote URL:", style=style).ask()
+            sync_manager.set_remote(remote_url)
+            print("Remote URL set.")
+
+        if action == "sync":
+            recipients = questionary.text("Enter GPG recipient key IDs (comma-separated):", style=style).ask().split(',')
+            sync_manager.sync(recipients)
+            print("Vault synced.")
+
+        if action == "decrypt":
+            sync_manager.decrypt_files()
+            print("Vault decrypted.")
+
         return
 
     vault_path = questionary.text("Vault name:", style=style).ask()
@@ -71,9 +165,9 @@ def main():
     password = questionary.password("Enter passphrase:", style=style).ask()
     try:
         vault, is_decoy = manager.load_vault(password)
-        print("🔒 Unlocking your vault...")
+        print(get_message("unlock-vault", "🔒 Unlocking your vault..."))
         time.sleep(1)
-        print("💭 Loading your last whispers...")
+        print(get_message("unlock-vault", "💭 Loading your last whispers..."))
         time.sleep(1)
         if is_decoy:
             logging.info("Decoy vault loaded.")
@@ -125,6 +219,11 @@ def main():
                 print("\n--- Note Content ---")
                 print(content)
                 print("--------------------")
+                if note_name in vault.links:
+                    print("\n--- Linked Notes ---")
+                    for linked_note in vault.links[note_name]:
+                        print(f"- {linked_note}")
+                    print("--------------------")
             else:
                 print("Note not found.")
         elif choice == 'List Notes':

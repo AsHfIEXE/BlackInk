@@ -11,6 +11,7 @@ class Vault:
     def __init__(self, key):
         self.key = key
         self.notes = {}
+        self.links = {}
 
     @staticmethod
     def create(password, salt):
@@ -90,11 +91,23 @@ class Vault:
             self.notes[note_name]['content'] = os.urandom(len(self.notes[note_name]['content'])).hex()
             del self.notes[note_name]
 
+    def link_notes(self, note1_name, note2_name):
+        if note1_name in self.notes and note2_name in self.notes:
+            if note1_name not in self.links:
+                self.links[note1_name] = []
+            if note2_name not in self.links:
+                self.links[note2_name] = []
+
+            self.links[note1_name].append(note2_name)
+            self.links[note2_name].append(note1_name)
+
     def to_json(self):
-        return json.dumps(self.notes).encode('utf-8')
+        return json.dumps({'notes': self.notes, 'links': self.links}).encode('utf-8')
 
     @classmethod
     def from_json(cls, key, json_data):
+        data = json.loads(json_data)
         vault = cls(key)
-        vault.notes = json.loads(json_data)
+        vault.notes = data.get('notes', {})
+        vault.links = data.get('links', {})
         return vault

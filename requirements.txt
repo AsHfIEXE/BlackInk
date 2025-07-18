@@ -1,2 +1,5 @@
 pycryptodome
 questionary
+gitpython
+python-gnupg
+llama-cpp-python
