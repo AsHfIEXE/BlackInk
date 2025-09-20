@@ -18,7 +18,7 @@ class TestVaultManager(unittest.TestCase):
 
     def test_create_and_load_vault(self):
         password = "test_password"
-        self.manager.create_vault(password)
+        self.manager.create_vault(password, log_attempts=False)
         self.assertTrue(os.path.exists(self.vault_path))
 
         vault, is_decoy = self.manager.load_vault(password)
@@ -29,7 +29,7 @@ class TestVaultManager(unittest.TestCase):
     def test_create_and_load_decoy_vault(self):
         main_password = "main_password"
         decoy_password = "decoy_password"
-        self.manager.create_vault(main_password, decoy_password)
+        self.manager.create_vault(main_password, log_attempts=False, decoy_password=decoy_password)
         self.assertTrue(os.path.exists(self.vault_path))
         self.assertTrue(os.path.exists(self.vault_path + ".decoy"))
 
@@ -44,18 +44,18 @@ class TestVaultManager(unittest.TestCase):
         self.assertIsNotNone(decoy_vault)
         self.assertTrue(is_decoy)
         # Check for one of the notes from the templates
-        notes = ["meeting_notes", "todo_list", "brainstorming", "daily_reflection", "gratitude_journal", "favorite_quote", "poem_idea", "doodle_description", "story_prompt"]
-        self.assertTrue(any(note in decoy_vault.notes for note in notes))
+        self.assertTrue(len(decoy_vault.list_notes()) > 1)
+
 
     def test_wrong_password(self):
         password = "test_password"
-        self.manager.create_vault(password)
+        self.manager.create_vault(password, log_attempts=False)
         with self.assertRaises(InvalidPasswordError):
             self.manager.load_vault("wrong_password")
 
     def test_save_and_load_note(self):
         password = "test_password"
-        self.manager.create_vault(password)
+        self.manager.create_vault(password, log_attempts=False)
         vault, _ = self.manager.load_vault(password)
 
         note_name = "my_note"
@@ -68,7 +68,7 @@ class TestVaultManager(unittest.TestCase):
 
     def test_hmac_mismatch(self):
         password = "test_password"
-        self.manager.create_vault(password)
+        self.manager.create_vault(password, log_attempts=False)
 
         # Tamper with the vault data
         with open(self.vault_path, 'r+') as f:
@@ -84,7 +84,7 @@ class TestVaultManager(unittest.TestCase):
     def test_wrong_key_correct_length(self):
         password = "test_password"
         wrong_password = "wrong_password" # Same length
-        self.manager.create_vault(password)
+        self.manager.create_vault(password, log_attempts=False)
         with self.assertRaises(InvalidPasswordError):
             self.manager.load_vault(wrong_password)
 
