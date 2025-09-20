@@ -1,4 +1,5 @@
 import os
+import logging
 from Crypto.Random import get_random_bytes
 from src.vault import Vault
 from src.exceptions import InvalidPasswordError
@@ -6,20 +7,20 @@ import json
 from src.decoy_templates import get_random_template
 
 class VaultManager:
-    def __init__(self, vault_path, log_attempts=False):
+    def __init__(self, vault_path):
         self.vault_path = vault_path
-        self.log_attempts = log_attempts
+        self.log_attempts = False # Default value, will be updated when vault is loaded
 
-    def create_vault(self, password, decoy_password=None):
+    def create_vault(self, password, log_attempts, decoy_password=None):
         # Create the main vault
-        self._create_vault_file(self.vault_path, password)
+        self._create_vault_file(self.vault_path, password, log_attempts)
 
         # Create the decoy vault if a decoy password is provided
         if decoy_password:
             decoy_vault_path = self.vault_path + ".decoy"
-            self._create_vault_file(decoy_vault_path, decoy_password, is_decoy=True)
+            self._create_vault_file(decoy_vault_path, decoy_password, log_attempts, is_decoy=True)
 
-    def _create_vault_file(self, path, password, is_decoy=False):
+    def _create_vault_file(self, path, password, log_attempts, is_decoy=False):
         salt = get_random_bytes(16)
         vault = Vault.create(password, salt)
         if is_decoy:
@@ -35,6 +36,7 @@ class VaultManager:
 
         vault_content = {
             'salt': salt.hex(),
+            'log_attempts': log_attempts,
             'data': encrypted_data
         }
 
@@ -73,6 +75,7 @@ class VaultManager:
         with open(path, 'r') as f:
             vault_content = json.load(f)
 
+        self.log_attempts = vault_content.get('log_attempts', False)
         salt = bytes.fromhex(vault_content['salt'])
         encrypted_data = vault_content['data']
 
@@ -87,19 +90,24 @@ class VaultManager:
             self._load_vault_file(self.vault_path, password)
             path = self.vault_path
             with open(path, 'r') as f:
-                salt = bytes.fromhex(json.load(f)['salt'])
+                vault_content = json.load(f)
+                salt = bytes.fromhex(vault_content['salt'])
+                log_attempts = vault_content.get('log_attempts', False)
         except InvalidPasswordError:
             path = self.vault_path + ".decoy"
             with open(path, 'r') as f:
-                salt = bytes.fromhex(json.load(f)['salt'])
+                vault_content = json.load(f)
+                salt = bytes.fromhex(vault_content['salt'])
+                log_attempts = vault_content.get('log_attempts', False)
 
         vault.key = Vault.create(password, salt).key # Re-key the vault
         encrypted_data = vault.encrypt(vault.to_json())
 
-        vault_content = {
+        new_vault_content = {
             'salt': salt.hex(),
+            'log_attempts': log_attempts,
             'data': encrypted_data
         }
 
         with open(path, 'w') as f:
-            json.dump(vault_content, f)
+            json.dump(new_vault_content, f)
